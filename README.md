@@ -8,3 +8,7 @@ CNN attempt learns the MNIST dataset through convolutions - at the end of the sc
 map. Need to update this to load the data through torchvision.
 
 you can download the dataset it refers to here http://yann.lecun.com/exdb/mnist/
+
+also contains an attempt (Saliency.py) to create a saliency map as an explanation - produces a heat map of regions that were most 
+important in classification decision. needs updating to use the dataloader from torchvision and to train the model (takes only
+3 epochs or so).
