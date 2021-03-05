@@ -3,68 +3,76 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torch
-import gzip, pickle
-from mnistunpacker import load_train_wrapper, load_test_wrapper
 import random
 import matplotlib.pyplot as plt
+import torchvision.datasets as dset
 
-images, labels = load_train_wrapper()
-labels = labels.squeeze(1)
 
 class net(nn.Module):
 	def __init__(self):
 		super(net,self).__init__()
-		self.conv1 = nn.Conv2d(3,6,5) #sizes of iflters
-		self.pool = nn.MaxPool2d(2, 2)
-		self.conv2 = nn.Conv2d(6, 16, 5)
-		self.fc1 = nn.Linear(16 * 4 * 4, 120)
-		self.fc2 = nn.Linear(120, 84)
-		self.fc3 = nn.Linear(84, 10)
+		self.conv1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, stride=1, padding=1)
+		self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1)
+		self.max_pool2d = nn.MaxPool2d(kernel_size=2, stride=2)
+		self.linear1 = nn.Linear(7 * 7 * 64, 128)
+		self.linear2 = nn.Linear(128, 10)
+		self.dropout = nn.Dropout(p = 0.5)
+		self.relu = nn.ReLU()
 
 	def forward(self, x):
-		x = self.pool(F.relu(self.conv1(x)))
-		#print(x.shape, 'line 29')
-		x = self.pool(F.relu(self.conv2(x)))
-		#print(x.shape)
-		x = x.view(-1, 16 * 4 * 4) #-1 is the batch size and setting it to -1 is good for now
-		#print(x.shape)
-		x = F.relu(self.fc1(x))
-		x = F.relu(self.fc2(x))
-		x = self.fc3(x)
-		return x.squeeze(1)	
-	def validate(self, x, y):
-		a = self.forward(x)
-		a = torch.argmax(a, dim = 1)
-		b = torch.max(y, 1)[1]
-		return int(torch.sum(a == b))
+		x = self.conv1(x)
+		x = self.relu(x)
+		x = self.max_pool2d(x)
+		x = self.conv2(x)
+		x = self.relu(x)
+		x = self.max_pool2d(x)
+		x = x.reshape(x.size(0), -1)
+		x = self.linear1(x)
+		x = self.relu(x)
+		x = self.dropout(x)
+		x = self.linear2(x)
+		return x
+	def validate(self, testdata): #testdata is a dataloader object
+		total = 0
+		correctPreds = 0
+		for data in testdata:
+			x, y = data
+			x = x.unsqueeze(1).float()
+			z = self.forward(x)
+			z = torch.argmax(z, 1)
+			total += len(y)
+			correctPreds += int(sum(z == y))
+		return correctPreds, total
 
 
-#start the network 
+'''
+get the data in 
+'''
+batch_size = 50
+mnist_trainset = dset.MNIST(root='.././data', train=True, download=True, transform=None)
+train_data = mnist_trainset.data
+dataset = torch.utils.data.TensorDataset(train_data, mnist_trainset.train_labels) #divide training data by 256 if necessary
+dataloader = torch.utils.data.DataLoader(dataset,
+										batch_size=batch_size,
+										shuffle=True)
+
+mnist_testset = dset.MNIST(root='.././data', train=False, download=True, transform=None)
+dataset = torch.utils.data.TensorDataset(mnist_testset.data, mnist_testset.test_labels) #divide training data by 256 if necessary
+test_dataloader = torch.utils.data.DataLoader(dataset, batch_size=32, shuffle=False)
+
+#start the network
 
 mynet = net()
 
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(mynet.parameters(), lr=0.001, momentum=0.9)
+criterion = nn.MSELoss()
+optimizer = optim.Adam(mynet.parameters(), lr=0.004)
 
-#image = torch.randn(1, 3,28,28)
-#print(image[0].shape)
+randomvariable = 1 #please end here
 
-#x = torch.Tensor(training_data[0][0])
-#x.reshape()
-#print(x.shape)
-batchsdf = images[0:50]
-#print('sdf', mynet(batchsdf).shape, labels.shape)
-
-somelabels = labels[0:50]
-#print('sds', torch.max(somelabels, 1)[1].shape)
-batch_size = 50
 
 def train(epochs):
-	batches = []
-	for i in range(len(images) // batch_size):
-		batches.append((images[batch_size*i:batch_size*(i+1)],
-						labels[batch_size*i:batch_size*(i+1)]))
-	print(len(batches))
+
+	#print(len(batches))
 	for epoch in range(epochs):
 		running_loss = 0.0
 		#we need to first make the batches
@@ -72,40 +80,36 @@ def train(epochs):
 		
 		#random.shuffle(batches)
 
-		for i, data in enumerate(batches, 0):
-			inputs, exp_labels = data
-			#exp_labels = exp_labels.squeeze(1)
-			#print(exp_labels.shape)
-			#exp_labels.squeeze_()
-			#print(exp_labels.shape)
+		for i, data in enumerate(dataloader, 0):
+			image, labels = data[0].unsqueeze(1).type(torch.FloatTensor), data[1]
 			optimizer.zero_grad()
 
 			#forward, backward,optimise
 
-			outputs = mynet(inputs)
-			#print(exp_labels.squeeze(1).shape)
-			loss = criterion(outputs, torch.max(exp_labels, 1)[1])
+			outputs = mynet(image)
+			labels = torch.nn.functional.one_hot(labels, num_classes=10).type(torch.FloatTensor)
+			loss = criterion(outputs, labels)
 			loss.backward()
 			optimizer.step()
 
-			running_loss += loss.item()
+			#running_loss += loss.item()
 
-			if i % 200 == 199:
-				print('epoch number {0},{1}, loss is {2} '
-					.format(epoch +1, i, running_loss / 200))
-
-				running_loss = 0.0
+		#end of epoch, validate
+		with torch.no_grad():
+			guesses, total = mynet.validate(test_dataloader)
+			print('at the end of epoch {0}, we got {1} out of {2} correct'.format(epoch +1,
+																			   guesses, total))
 
 
 
 mypath = './torchtest.pth'
 
-'''train(3)
+train(30)
 
 
-torch.save(mynet.state_dict(), mypath)'''
+torch.save(mynet.state_dict(), mypath)
 
-mynet.load_state_dict(torch.load(mypath))
+#mynet.load_state_dict(torch.load(mypath))
 
 x = mynet(batchsdf)
 a = torch.argmax(x, dim = 1)
